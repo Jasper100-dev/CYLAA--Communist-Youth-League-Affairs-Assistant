@@ -23,7 +23,7 @@
 
   /* ---------------- state ---------------- */
   const state = {
-    roster: [], // {key,no,name,ethnic,phone,duty}
+    roster: [], // {key,no,name,gender,ethnic,phone,duty,inOrg,joinYm}
     selected: new Set(),
     _rosterSig: '',
     codes: [], // {name,code,expiry,time}
@@ -33,7 +33,9 @@
     pendingName: '',
     route: '',
     logs: [],
-    settings: { autoClose: true, delay: 400 },
+    // ballX / ballY：悬浮球左上角坐标（px）；null 表示用默认位置（贴右上）
+    // snapEdge：松手后是否吸附到最近的页边（默认开）
+    settings: { autoClose: true, delay: 400, snapEdge: true, ballX: null, ballY: null },
   };
 
   function log(msg) {
@@ -102,24 +104,49 @@
   // 去掉姓名后的 "(管理员)" 之类的角标
   const cleanName = (s) => String(s || '').replace(/[（(]\s*管理员\s*[)）]/g, '').trim();
 
+  // 表头文案会因组织类型 / 页面版本而略有差异（比如「手机号码」「手机号」），
+  // 先精确匹配，再按关键字包含匹配；都没有就返回 -1，导出时留空。
+  function headerIndex(heads, names) {
+    for (const n of names) {
+      const i = heads.indexOf(n);
+      if (i >= 0) return i;
+    }
+    for (const n of names) {
+      const i = heads.findIndex((h) => h && h.includes(n));
+      if (i >= 0) return i;
+    }
+    return -1;
+  }
+
   function readRows(table) {
     const heads = tableHeaders(table);
-    const idx = {};
-    heads.forEach((h, i) => (idx[h] = i));
+    const idx = {
+      no: headerIndex(heads, ['序号']),
+      name: headerIndex(heads, ['姓名']),
+      gender: headerIndex(heads, ['性别']),
+      ethnic: headerIndex(heads, ['民族']),
+      phone: headerIndex(heads, ['手机号码', '手机号', '手机', '联系电话']),
+      duty: headerIndex(heads, ['团内职务', '职务']),
+      inOrg: headerIndex(heads, ['团籍是否在本组织', '团籍是否在本', '团籍是否', '团籍']),
+      joinYm: headerIndex(heads, ['入团年月', '入团时间', '入团日期']),
+    };
     const trs = $$('.el-table__body tbody tr', table).filter((tr) => $$('td', tr).length);
     return trs.map((tr, i) => {
       const tds = $$('td', tr);
-      const cell = (name) => (idx[name] == null ? '' : cellText(tds[idx[name]]));
-      const no = cell('序号') || String(i + 1);
-      const name = cleanName(cell('姓名'));
-      const phone = cell('手机号码');
+      const cell = (k) => (idx[k] < 0 || !tds[idx[k]] ? '' : cellText(tds[idx[k]]));
+      const no = cell('no') || String(i + 1);
+      const name = cleanName(cell('name'));
+      const phone = cell('phone');
       return {
         key: `${no}|${name}|${phone}`,
         no,
         name,
-        ethnic: cell('民族'),
+        gender: cell('gender'),
+        ethnic: cell('ethnic'),
         phone,
-        duty: cell('团内职务'),
+        duty: cell('duty'),
+        inOrg: cell('inOrg'),
+        joinYm: cell('joinYm'),
         el: tr,
       };
     });
@@ -239,6 +266,20 @@
 
   const clickNext = () => clickPager('next');
 
+  // 网站自带的「导出团员数据」把当前页码直接拼进了请求地址：
+  //   /v1/center/exportmembers/{当前页}/{搜索词}/{身份证号}/{性别}
+  // 页面停在第 2 页及以后时，这个导出拿不到数据，下载下来的 xlsx 是空的
+  // （不抓取时表格停在第 1 页，所以看起来“只有抓取后才会坏”）。
+  // 因此凡是插件替用户翻过页的流程，结束时都要把表格翻回第 1 页。
+  async function backToFirstPage() {
+    const info = pageInfo();
+    if (!info.total || info.current <= 1) return true;
+    const ok = await gotoPage(1);
+    if (ok) log('已把名单翻回第 1 页（不翻回去，网站自带的「导出团员数据」会下载到空文件）');
+    else log('⚠️ 没能翻回第 1 页，请手动点「首页」，否则网站自带的导出可能是空的');
+    return ok;
+  }
+
   /* ---------------- roster capture ---------------- */
   async function captureRoster() {
     if (state.running) return;
@@ -248,6 +289,7 @@
       return;
     }
     state.running = true;
+    state._official = undefined; // 组织/筛选可能变了，补齐数据重新取
     renderRoster();
     try {
       const merged = new Map();
@@ -282,6 +324,12 @@
     } catch (e) {
       log(`抓取出错：${e.message}`);
     } finally {
+      // 必须翻回第 1 页，否则网站自带的「导出团员数据」会下载到空文件
+      try {
+        await backToFirstPage();
+      } catch (e) {
+        /* 翻页失败不影响已经抓到的名单 */
+      }
       state.running = false;
       renderRoster();
     }
@@ -621,6 +669,12 @@
       }
       log('取码流程结束');
     } finally {
+      // 取码同样会翻页，结束时也翻回第 1 页，免得网站自带的导出变成空文件
+      try {
+        await backToFirstPage();
+      } catch (e) {
+        /* 忽略 */
+      }
       state.running = false;
       renderTasks();
     }
@@ -644,14 +698,135 @@
     setTimeout(() => URL.revokeObjectURL(url), 2000);
   }
 
-  function exportRoster() {
+  /* ---------- 用网站自带的导出补齐页面表格里没有的列 ---------- */
+  // 名单表格只显示 序号/姓名/民族/手机号码/团内职务；性别、团籍是否在本组织、入团年月
+  // 是网站导出 xlsx 时才由服务端拼上的列。导出 CSV 时按网站自己那个导出接口取一次，
+  // 再按「姓名+手机号」并回名单；取不到就留空，不影响 CSV 正常导出。
+  // 接口地址取自网站源码：/v1/center/exportmembers/{页码}/{搜索词}/{身份证号}/{性别}
+  const OFFICIAL_EXPORT_URL = '/v1/center/exportmembers/1///-1';
+
+  async function readOfficialExport() {
+    if (state._official !== undefined) return state._official;
+    state._official = null;
+    if (routeKind() !== 'memberlist') return null;
+    try {
+      const headers = {};
+      const tk = csrfToken();
+      if (tk) headers['X-CSRF-Token'] = tk;
+      const r = await fetch(OFFICIAL_EXPORT_URL, {
+        method: 'GET',
+        credentials: 'include',
+        headers,
+        signal: AbortSignal.timeout(8000),
+      });
+      const type = String(r.headers.get('content-type') || '');
+      if (!r.ok || /json|html|text\//i.test(type)) {
+        log('网站导出接口暂未取到，性别/团籍/入团年月留空');
+        return null;
+      }
+      const table = await parseXlsx(await r.arrayBuffer());
+      if (!table || table.length < 2) return null;
+      // 官方导出可能带一行标题（合并单元格），所以往下找真正的表头行
+      const norm = (v) => String(v == null ? '' : v).trim();
+      let headIdx = -1;
+      for (let i = 0; i < Math.min(table.length, 8); i++) {
+        if (table[i].map(norm).some((c) => c.includes('姓名'))) {
+          headIdx = i;
+          break;
+        }
+      }
+      if (headIdx < 0) return null;
+      const head = table[headIdx].map(norm);
+      const iName = headerIndex(head, ['姓名']);
+      const iPhone = headerIndex(head, ['手机号码', '手机号', '手机', '联系电话']);
+      const iGender = headerIndex(head, ['性别']);
+      const iInOrg = headerIndex(head, ['团籍是否在本组织', '团籍是否在本', '团籍']);
+      const iJoin = headerIndex(head, ['入团年月', '入团时间', '入团日期']);
+      if (iName < 0) return null;
+      // 有些机器导出的单元格是 0/1 或日期序号，统一成能看懂的值
+      const normGender = (v) => {
+        const s = norm(v);
+        if (s === '1') return '男';
+        if (s === '0') return '女';
+        return s;
+      };
+      const normYes = (v) => {
+        const s = norm(v);
+        if (s === '1' || s.toLowerCase() === 'true') return '是';
+        if (s === '0' || s.toLowerCase() === 'false') return '否';
+        return s;
+      };
+      const normYm = (v) => {
+        const s = norm(v);
+        if (/^\d{5}(\.\d+)?$/.test(s)) {
+          const d = new Date(Date.UTC(1899, 11, 30) + Math.round(Number(s)) * 86400000);
+          const y = d.getUTCFullYear();
+          if (y > 1990 && y < 2100) return `${y}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
+        }
+        if (/^\d{6}$/.test(s)) return `${s.slice(0, 4)}-${s.slice(4, 6)}`;
+        return s;
+      };
+      const list = table
+        .slice(headIdx + 1)
+        .map((r) => ({
+          name: cleanName(r[iName]),
+          phone: iPhone >= 0 ? norm(r[iPhone]) : '',
+          gender: iGender >= 0 ? normGender(r[iGender]) : '',
+          inOrg: iInOrg >= 0 ? normYes(r[iInOrg]) : '',
+          joinYm: iJoin >= 0 ? normYm(r[iJoin]) : '',
+        }))
+        .filter((r) => r.name);
+      state._official = list;
+      if (list.length) log(`已读到网站导出的 ${list.length} 行，用来补齐性别/团籍/入团年月`);
+      return list;
+    } catch (e) {
+      log(`补齐字段失败（不影响导出）：${e.message}`);
+      return null;
+    }
+  }
+
+  async function enrichRoster() {
+    if (!state.roster.some((r) => !r.gender || !r.inOrg || !r.joinYm)) return;
+    const list = await readOfficialExport();
+    if (!list || !list.length) return;
+    const byKey = new Map();
+    const byName = new Map();
+    list.forEach((r) => {
+      if (r.phone && !byKey.has(`${r.name}|${r.phone}`)) byKey.set(`${r.name}|${r.phone}`, r);
+      const arr = byName.get(r.name) || [];
+      arr.push(r);
+      byName.set(r.name, arr);
+    });
+    let hit = 0;
+    state.roster.forEach((row) => {
+      let src = byKey.get(`${row.name}|${row.phone}`);
+      if (!src) {
+        // 官方导出里没有手机号时，只有同名唯一才敢对齐，避免张冠李戴
+        const arr = byName.get(row.name) || [];
+        if (arr.length === 1) src = arr[0];
+      }
+      if (!src) return;
+      if (!row.gender && src.gender) row.gender = src.gender;
+      if (!row.inOrg && src.inOrg) row.inOrg = src.inOrg;
+      if (!row.joinYm && src.joinYm) row.joinYm = src.joinYm;
+      hit += 1;
+    });
+    if (hit) log(`已补齐 ${hit} 人的性别/团籍/入团年月`);
+  }
+
+  async function exportRoster() {
     const rows = state.roster.filter((r) => !state.selected.size || state.selected.has(r.key));
     if (!rows.length) {
       log('没有可导出的数据');
       return;
     }
-    const data = [['序号', '姓名', '民族', '手机号码', '团内职务']];
-    rows.forEach((r) => data.push([r.no, r.name, r.ethnic, r.phone, r.duty]));
+    try {
+      await enrichRoster();
+    } catch (e) {
+      /* 补齐失败也照常导出 */
+    }
+    const data = [['序号', '姓名', '性别', '民族', '手机号码', '团内职务', '团籍是否在本组织', '入团年月']];
+    rows.forEach((r) => data.push([r.no, r.name, r.gender, r.ethnic, r.phone, r.duty, r.inOrg, r.joinYm]));
     const csv = '\uFEFF' + data.map((r) => r.map(csvCell).join(',')).join('\r\n');
     const d = new Date();
     download(`团员名单_${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}.csv`, csv);
@@ -732,18 +907,109 @@
     if (name === 'task') renderTasks();
   }
 
+  /* ---------------- 悬浮球：位置、拖动、吸附 ---------------- */
+  // 悬浮球（收起后的小圆钮）可以拖到任意位置；开启吸附时松手贴到最近的左右页边。
+  // 展开成卡片时按球所在的半边决定往外/往里展开的方向，并把卡片整体夹在屏幕内。
+  const BALL_SIZE = 46; // 小球直径，和 .dock.mini 的尺寸保持一致
+  const DOCK_EDGE = 8; // 展开卡片与屏幕边缘的最小留白
+  let dockEl = null;
+
+  const viewportSize = () => ({ w: window.innerWidth, h: window.innerHeight });
+  const clampNum = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
+
+  // 记录的是悬浮球左上角坐标；没记录过（或窗口变小）时给一个贴右上的默认位置
+  function ballPos() {
+    const { w, h } = viewportSize();
+    let x = Number(state.settings.ballX);
+    let y = Number(state.settings.ballY);
+    if (!Number.isFinite(x) || state.settings.ballX == null) x = w - BALL_SIZE;
+    if (!Number.isFinite(y) || state.settings.ballY == null) y = 88;
+    return { x: clampNum(x, 0, Math.max(0, w - BALL_SIZE)), y: clampNum(y, 0, Math.max(0, h - BALL_SIZE)) };
+  }
+
+  // 收起状态：小球就在记录的位置
+  function placeBall() {
+    if (!root) return;
+    const b = ballPos();
+    root.style.left = `${b.x}px`;
+    root.style.top = `${b.y}px`;
+    root.style.right = 'auto';
+  }
+
+  // 展开状态：球在右半边就贴右展开，在左半边就贴左展开；
+  // 球在下半边就向上展开，否则向下展开；最后整体夹进视口，避免卡片跑到屏幕外
+  function placeDock() {
+    if (!root || !dockEl) return;
+    const { w, h } = viewportSize();
+    // 先放开高度限制量出自然高度（窄屏时宽度也收一收）
+    dockEl.style.maxHeight = `${Math.max(240, h - DOCK_EDGE * 2)}px`;
+    dockEl.style.width = w < 420 + DOCK_EDGE * 2 ? `${Math.max(260, w - DOCK_EDGE * 2)}px` : '';
+    const width = dockEl.offsetWidth || 420;
+    const height = dockEl.offsetHeight || 0;
+    const b = ballPos();
+    const cx = b.x + BALL_SIZE / 2;
+    const cy = b.y + BALL_SIZE / 2;
+    let left = cx > w / 2 ? b.x + BALL_SIZE - width : b.x;
+    let top = cy > h / 2 ? b.y + BALL_SIZE - height : b.y;
+    // 横向允许贴边（吸附后和原来一样贴住页边），纵向留 8px 呼吸位
+    left = clampNum(left, 0, Math.max(0, w - width));
+    top = clampNum(top, DOCK_EDGE, Math.max(DOCK_EDGE, h - height - DOCK_EDGE));
+    root.style.left = `${left}px`;
+    root.style.top = `${top}px`;
+    root.style.right = 'auto';
+    dockEl.style.maxHeight = `${Math.max(240, h - top - DOCK_EDGE)}px`;
+    // 贴着哪边，就只保留另一侧圆角，视觉上和原来贴边时一致
+    const atRight = left + width >= w - 2;
+    const atLeft = left <= 2;
+    dockEl.classList.toggle('at-right', atRight && !atLeft);
+    dockEl.classList.toggle('at-left', atLeft && !atRight);
+  }
+
+  function applyBallLayout() {
+    if (!dockEl) return;
+    if (dockEl.classList.contains('mini')) placeBall();
+    else placeDock();
+  }
+
+  // 吸附到最近的页边：左右二选一，纵向保持不变
+  function snapBallToEdge() {
+    const { w, h } = viewportSize();
+    const b = ballPos();
+    state.settings.ballX = b.x + BALL_SIZE / 2 < w / 2 ? 0 : w - BALL_SIZE;
+    state.settings.ballY = clampNum(b.y, 0, Math.max(0, h - BALL_SIZE));
+    applyBallLayout();
+  }
+
+  function saveSettings() {
+    try {
+      chrome.storage.local.set({ zhtjHelperSettings: state.settings });
+    } catch (e) {
+      /* 非扩展环境忽略 */
+    }
+  }
+
+  // 拖动结束后浏览器还会补一个 click，别把它当成“点开面板”
+  function takeSwallowedClick() {
+    if (!state._swallowClick) return false;
+    state._swallowClick = false;
+    return true;
+  }
+
   function mount() {
     const host = document.createElement('div');
     host.id = 'zhtj-helper-host';
-    host.style.cssText = 'position:fixed;z-index:2147483000;right:0;top:88px;';
+    host.style.cssText = 'position:fixed;z-index:2147483000;left:0;top:88px;';
     document.body.appendChild(host);
     shadow = host.attachShadow({ mode: 'open' });
     shadow.innerHTML = `
       <style>
         *{box-sizing:border-box;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif}
-        .dock{width:420px;max-height:calc(100vh - 120px);background:#fff;border-radius:12px 0 0 12px;
-          box-shadow:-6px 0 24px rgba(0,0,0,.14);display:flex;flex-direction:column;overflow:hidden;
-          border:1px solid #eee;border-right:none;font-size:13px;color:#222}
+        .dock{width:420px;max-height:calc(100vh - 24px);background:#fff;border-radius:12px;
+          box-shadow:0 6px 24px rgba(0,0,0,.14);display:flex;flex-direction:column;overflow:hidden;
+          border:1px solid #eee;font-size:13px;color:#222}
+        /* 展开后贴着某一侧页边时，只保留内侧圆角，和原来贴右时的观感一致 */
+        .dock.at-right{border-radius:12px 0 0 12px;border-right:none;box-shadow:-6px 0 24px rgba(0,0,0,.14)}
+        .dock.at-left{border-radius:0 12px 12px 0;border-left:none;box-shadow:6px 0 24px rgba(0,0,0,.14)}
         .hd{display:flex;align-items:center;gap:8px;padding:10px 12px;background:linear-gradient(90deg,#c8161d,#e23c3c);color:#fff}
         .hd .lg{width:26px;height:26px;flex:none;border-radius:50%;background:#fff;padding:1px;
           object-fit:contain;box-shadow:0 1px 3px rgba(0,0,0,.2)}
@@ -808,14 +1074,17 @@
         .code b{font-family:ui-monospace,Consolas,monospace;color:#c8161d;font-size:14px;letter-spacing:1px}
         .code .n{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
         .foot{padding:8px 12px;border-top:1px solid #eee;font-size:11px;color:#999;display:flex;justify-content:space-between}
-        .dock.mini{width:46px;height:46px;border-radius:23px;cursor:pointer}
+        .dock.mini{width:46px;height:46px;border-radius:23px;cursor:grab;touch-action:none;
+          user-select:none;-webkit-user-select:none}
+        .dock.mini.dragging{cursor:grabbing}
         .dock.mini .tabs,.dock.mini .body,.dock.mini .foot{display:none!important}
         .dock.mini .hd{padding:0;height:46px;justify-content:center}
         .dock.mini .hd{position:relative}
         .dock.mini .hd .lg{width:34px;height:34px;padding:2px}
         .dock.mini .hd b,.dock.mini .hd .tag,.dock.mini .hd .sp{display:none}
         /* 收起成小圆钮时，整个圆钮就是展开按钮（铺满、透明，保留键盘可聚焦） */
-        .dock.mini .hd button{position:absolute;inset:0;width:100%;height:100%;font-size:0;opacity:0}
+        .dock.mini .hd button{position:absolute;inset:0;width:100%;height:100%;font-size:0;opacity:0;cursor:grab}
+        .dock.mini.dragging .hd button{cursor:grabbing}
         label.sw{display:flex;align-items:center;gap:6px;font-size:12px;color:#444;margin:6px 0}
         .tiny{font-size:11px;color:#999;line-height:1.6}
         textarea.ta{width:100%;height:110px;border:1px solid #ddd;border-radius:6px;padding:6px;font-size:11px;
@@ -885,9 +1154,15 @@
     });
 
     const dock = shadow.querySelector('.dock');
+    dockEl = dock;
     const miniBtn = shadow.querySelector('.hd button');
     const setMini = (mini) => {
       dock.classList.toggle('mini', mini);
+      if (mini) {
+        // 小球是圆的，别留着展开态“贴边”的直角/无边框
+        dock.classList.remove('at-right', 'at-left');
+        dock.style.width = '';
+      }
       miniBtn.textContent = mini ? '' : '—';
       miniBtn.title = mini ? '展开' : '收起';
       miniBtn.setAttribute('aria-label', mini ? '展开团务助手' : '收起团务助手');
@@ -897,16 +1172,71 @@
           p.style.display = active && p.dataset.pane === active.dataset.tab ? 'block' : 'none';
         });
       }
+      // 收起时回到悬浮球的位置；展开时按球在屏幕的哪半边决定卡片朝哪边展开
+      applyBallLayout();
     };
     miniBtn.addEventListener('click', (e) => {
       e.stopPropagation();
+      if (takeSwallowedClick()) return;
       setMini(!dock.classList.contains('mini'));
     });
     dock.addEventListener('click', () => {
+      if (takeSwallowedClick()) return;
       if (dock.classList.contains('mini')) setMini(false);
     });
+
+    // 拖动悬浮球：只有收起成小球时可拖；移动超过 4px 才算拖动，否则仍然是点击展开
+    let drag = null;
+    dock.addEventListener('pointerdown', (e) => {
+      if (!dock.classList.contains('mini')) return;
+      if (e.button != null && e.button !== 0) return;
+      const b = ballPos();
+      drag = { id: e.pointerId, sx: e.clientX, sy: e.clientY, bx: b.x, by: b.y, moved: false };
+      try {
+        dock.setPointerCapture(e.pointerId);
+      } catch (err) {
+        /* 老浏览器忽略 */
+      }
+      dock.classList.add('dragging');
+    });
+    dock.addEventListener('pointermove', (e) => {
+      if (!drag || e.pointerId !== drag.id) return;
+      const dx = e.clientX - drag.sx;
+      const dy = e.clientY - drag.sy;
+      if (!drag.moved && Math.abs(dx) + Math.abs(dy) < 4) return;
+      drag.moved = true;
+      const { w, h } = viewportSize();
+      state.settings.ballX = clampNum(drag.bx + dx, 0, Math.max(0, w - BALL_SIZE));
+      state.settings.ballY = clampNum(drag.by + dy, 0, Math.max(0, h - BALL_SIZE));
+      placeBall();
+      if (e.cancelable) e.preventDefault();
+    });
+    const endDrag = (e) => {
+      if (!drag || (e && e.pointerId !== drag.id)) return;
+      const moved = drag.moved;
+      try {
+        dock.releasePointerCapture(drag.id);
+      } catch (err) {
+        /* 忽略 */
+      }
+      drag = null;
+      dock.classList.remove('dragging');
+      if (!moved) return;
+      state._swallowClick = true;
+      setTimeout(() => {
+        state._swallowClick = false;
+      }, 400);
+      if (state.settings.snapEdge) snapBallToEdge();
+      else placeBall();
+      saveSettings();
+    };
+    dock.addEventListener('pointerup', endDrag);
+    dock.addEventListener('pointercancel', endDrag);
+    window.addEventListener('resize', () => applyBallLayout());
+
     renderAll();
     renderLog();
+    applyBallLayout();
     // 刷新后（比如为了回到第 1 页）把评议页签和已读取的数据恢复出来
     if (routeKind() === 'twosystem' && pjState.rows.length) activateTab('pj');
   }
@@ -2803,6 +3133,8 @@
     if (!pane) return;
     pane.innerHTML = `
       <label class="sw"><input type="checkbox" data-set="autoClose" ${state.settings.autoClose ? 'checked' : ''}> 记录后自动关闭弹窗</label>
+      <label class="sw"><input type="checkbox" data-set="snapEdge" ${state.settings.snapEdge ? 'checked' : ''}> 悬浮球吸附到最近页边</label>
+      <div class="tiny" style="margin:-2px 0 8px">收起成悬浮球后可以直接拖动；开启吸附时松手会贴到最近的左右页面边缘，卡片会按球的位置自动决定展开方向。</div>
       <label class="sw">操作间隔 <input type="number" data-set="delay" min="200" max="3000" step="100" value="${state.settings.delay}" style="width:70px"> ms</label>
       <div class="row" style="margin-top:8px">
         <button class="b" data-act="logout">清除本地数据</button>
@@ -2810,7 +3142,7 @@
       <div style="border-top:1px dashed #eee;margin:10px 0"></div>
       <div class="tiny">当前版本 v${VERSION}（商店版，更新由 Microsoft Edge 加载项商店完成）</div>
       <div class="tiny" style="margin-top:10px">
-        本工具只读取当前页面已展示的数据，不上传任何内容。<br>
+        本工具只读取当前页面已展示的数据与平台自身的同源接口，不上传任何内容。<br>
         批量任务需要你在面板中点击确认后才会执行；确认后插件会逐人填写并提交，请先核对名单与内容。<br>
         审批、删除等动作仍需你在页面上亲自操作。
       </div>
@@ -2819,7 +3151,11 @@
       inp.addEventListener('change', () => {
         const k = inp.dataset.set;
         state.settings[k] = inp.type === 'checkbox' ? inp.checked : Number(inp.value) || 400;
-        chrome.storage.local.set({ zhtjHelperSettings: state.settings });
+        if (k === 'snapEdge') {
+          if (state.settings.snapEdge) snapBallToEdge();
+          else applyBallLayout();
+        }
+        saveSettings();
       })
     );
     pane.querySelector('[data-act="logout"]').addEventListener('click', () => {
@@ -2828,6 +3164,7 @@
       state.codes = [];
       state.logs = [];
       state._rosterSig = null;
+      state._official = undefined;
       clearPjCache();
       syncDecoration();
       renderAll();

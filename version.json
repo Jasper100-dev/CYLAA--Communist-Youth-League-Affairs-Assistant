@@ -1,5 +1,5 @@
 {
-  "version": "0.3.6",
+  "version": "0.4.0",
   "url": "https://github.com/Jasper100-dev/CYLAA--Communist-Youth-League-Affairs-Assistant/releases/latest",
-  "notes": "团务助手 v0.3.6：修复更新检查与权限，新增 Edge 商店发布线"
+  "notes": "团务助手 v0.4.0：新增悬浮球拖动与页边吸附，名单 CSV 补齐性别/团籍/入团年月，修复抓取后网站导出空文件"
 }

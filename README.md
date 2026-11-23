@@ -10,7 +10,7 @@
 
 ---
 
-> 本分支维护 GitHub 发布版，当前版本 **0.4.0**，通过 GitHub Releases 更新。Microsoft Edge 加载项商店版在 [`edge`](https://github.com/Jasper100-dev/CYLAA--Communist-Youth-League-Affairs-Assistant/tree/edge) 分支独立维护，两版互不影响。
+> 本分支维护 GitHub 发布版，当前版本 **0.4.1**，通过 GitHub Releases 更新。Microsoft Edge 加载项商店版在 [`edge`](https://github.com/Jasper100-dev/CYLAA--Communist-Youth-League-Affairs-Assistant/tree/edge) 分支独立维护，两版互不影响。
 >
 > 本工具为第三方辅助工具，与智慧团建官方平台不存在授权或隶属关系。
 
@@ -68,7 +68,7 @@
 | 工具类型 | 浏览器辅助工具 |
 | 适用对象 | 有相应平台操作权限的团务工作人员 |
 | 浏览器 | Edge、Chrome |
-| 当前版本 | v0.4.0 |
+| 当前版本 | v0.4.1 |
 
 ## 安装与使用
 
@@ -108,7 +108,7 @@
 
 ## 版本信息
 
-- GitHub 版：**v0.4.0**（本分支，通过 Releases 更新）
+- GitHub 版：**v0.4.1**（本分支，通过 Releases 更新）
 - Edge 商店版：在 `edge` 分支独立维护
 - [查看版本发布页面](https://github.com/Jasper100-dev/CYLAA--Communist-Youth-League-Affairs-Assistant/releases)
 - [查看更新日志](CHANGELOG.md)

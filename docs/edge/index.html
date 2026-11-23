@@ -40,7 +40,7 @@
 <table>
   <tr><th>位置</th><th>内容</th><th>保留期限</th></tr>
   <tr><td>浏览器内存</td><td>当前名单、验证码记录、任务状态</td><td>页面关闭即释放</td></tr>
-  <tr><td><code>chrome.storage.local</code></td><td>名单变更快照（姓名 | 手机号）、上次更新时间、面板设置</td><td>持久保存；名单变更快照与面板设置保留到卸载扩展，当前名单、验证码与评议缓存可在扩展内清除</td></tr>
+  <tr><td><code>chrome.storage.local</code></td><td>名单变更快照（姓名 | 手机号）、上次更新时间、面板设置</td><td>持久保存；可在设置中用「完全清除」删除，或卸载扩展一并清除；「清理缓存」只清当前名单、验证码与评议缓存</td></tr>
   <tr><td><code>sessionStorage</code></td><td>评议缓存、字段模板、录入任务、系统字典</td><td>浏览器会话结束时清除</td></tr>
   <tr><td>本地导出文件</td><td>团员名单 CSV、重置码 TXT</td><td>保存在您指定的下载目录，由您自行管理</td></tr>
 </table>
@@ -62,7 +62,7 @@
 <h2>6. 您的权利与控制</h2>
 <ul>
   <li>可随时停止正在运行的任务，或关闭/卸载本扩展。</li>
-  <li>卸载扩展会一并清除 <code>chrome.storage.local</code> 与 <code>sessionStorage</code> 中的数据。</li>
+  <li>可在设置中用「完全清除」删除本地保存的名单快照与面板设置；卸载扩展也会一并清除 <code>chrome.storage.local</code> 与 <code>sessionStorage</code> 中的数据。</li>
   <li>本地导出文件需您自行删除；本扩展无法远程删除您设备上的文件。</li>
   <li>如发现数据处理与政策不符，请通过下方渠道反馈。</li>
 </ul>

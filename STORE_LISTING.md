@@ -1,6 +1,21 @@
-# Edge 商店填写清单（v1.0.0）
+# Edge 商店填写清单（v1.1.0）
 
 > 复制到 Partner Center 对应字段。所有功能描述必须与商店包实际行为一致。
+
+## 本次更新（v1.1.0，2026-11-23）
+
+发布包：`dist/CYLAA-edge-1.1.0.zip`（54,549 字节，manifest 在 zip 根目录，版本 **1.1.0**）。
+
+Partner Center → Packages 上传新包后，其余字段按下文填写；**没有变化的字段可以不改**。建议在 Release notes / "What's new" 里粘贴：
+
+```
+本次更新（v1.1.0）
+· 名单 CSV 增加性别、团籍是否在本组织、入团年月，与平台导出的名单字段一致
+· 修复抓取名单后，平台自带的「导出团员数据」会下载到空文件的问题
+· 面板可收起成悬浮球拖动，设置中新增「吸附到最近页边」（默认开启），卡片自动选择展开方向，不会超出屏幕
+```
+
+本次同步改动的文件（都已提交到 `edge` 分支）：`manifest.json`（1.1.0）、`CHANGELOG.md`、`README.md`、`docs/index.html`（隐私页）、`store-assets/store-description.txt`。
 
 ## Extension name
 
@@ -34,7 +49,7 @@
 
 > 填在 Partner Center → Store listings → Details for 中文（简体）→ **Description**，不是 manifest 的 `description` 字段。纯文本粘贴，不要带 Markdown 标记。
 >
-> 完整文案以 **`store-assets/store-description.txt`** 为准（1,577 字符，满足 250–10000 要求），可直接全选复制。功能分节、列表与隐私说明均已按商店包的实际行为重写。
+> 完整文案以 **`store-assets/store-description.txt`** 为准（1,759 字符，满足 250–10000 要求），可直接全选复制。功能分节、列表与隐私说明均已按商店包的实际行为重写。
 
 修改长描述时只改 `store-assets/store-description.txt`，并同步更新这里的字符数，避免多处文案不一致。
 
@@ -98,13 +113,14 @@
 https://jasper100-dev.github.io/CYLAA--Communist-Youth-League-Affairs-Assistant/docs/edge/
 ```
 
-> ⚠️ **上架前必须修正隐私页**：已发布的隐私政策（`main` 分支 `docs/edge/index.html`）第 1 节写着“也不读取身份证号等未在表中列出的字段”，但录入预检实际会解析身份证号做校验，描述与隐私页会互相矛盾。
+> ✅ **1.1.0 已修正隐私页**（`edge` 分支 `docs/index.html` 与 `main` 分支 `docs/edge/index.html`，两者内容一致）：
+> - 数据表补上 性别 / 团籍是否在本组织 / 入团年月，来源注明「平台页面表格；导出名单时读取平台自身的导出文件（同源）」；
+> - 第 1 节改为「录入预检会在本机内存中读取导入文件里的身份证号，仅用于格式与校验位检查，不写入存储、不上传」；
+> - 第 3 节网络通信补上 `/v1/center/exportmembers/…`（同源、当前登录会话）；
+> - 存储说明改为「名单变更快照与面板设置保留到卸载扩展；当前名单、验证码与评议缓存可在扩展内清除」，与「清除本地数据」按钮的实际行为一致（该按钮不会删除 `chrome.storage.local` 里的名单快照）；
+> - 第 5 节改为「验证码记录会在您打开密码重置弹窗后自动进行」。
 >
-> 建议把该句改为：“录入预检会在本机内存中读取导入表格里的身份证号，用于格式与校验位检查，不写入存储、不上传。”并在数据表中补一行“导入文件（含身份证号）”。`edge` 分支的 `docs/index.html` 也要同步改。
->
-> 另：隐私页第 5 节写“验证码记录由您在面板中主动触发”，实际是用户打开密码重置弹窗后自动记录（仍由用户操作触发），建议改为“打开重置弹窗后自动记录”，与商店描述一致。
->
-> 另：设置里的「清除本地数据」目前只清空面板状态和评议缓存，没有删除 `chrome.storage.local` 中的 `zhtjRosterSnapshot`（姓名 + 手机号快照），与隐私页“可在扩展中清除”不一致。上架前二选一：修 `content.js`，在清除时调用 `chrome.storage.local.remove(['zhtjRosterSnapshot'])` 后重新打包；或把隐私页改为“卸载扩展后清除”。
+> 线上隐私页由 `main` 分支的 GitHub Pages 提供，推送后需等 1–2 分钟构建；**提交商店前请先打开链接确认已是新文案**。
 
 ## URL 核验（2026-11-20）
 
@@ -159,11 +175,12 @@ https://jasper100-dev.github.io/CYLAA--Communist-Youth-League-Affairs-Assistant/
 
 ## 上架前检查
 
-1. 发布包 `dist/CYLAA-edge-1.0.0.zip` 已生成，manifest 在 zip 根目录。
+1. 发布包 `dist/CYLAA-edge-1.1.0.zip` 已生成，manifest 在 zip 根目录，`version` 为 `1.1.0`。
 2. 权限仅 `storage` + `https://zhtj.youth.cn/*`，只加载 `content.js`。
 3. 包内无 `update.js`、`version.json`、第三方更新地址。
-4. 隐私页 URL 可访问，内容与商店版行为一致。
+4. 隐私页 URL 可访问，内容已更新到 1.1.0 行为（同源导出接口、身份证号说明、存储期限）。
 5. 商店描述、面板文案、隐私页三处关于“确认后自动提交”的表述一致。
-6. 6 张截图已放入 `store-assets/screenshots/`，均为 1280×800，敏感信息已打码。
+6. 6 张截图已放入 `store-assets/screenshots/`，均为 1280×800，敏感信息已打码（截图为 1.0.0 界面；1.1.0 只多了一个设置项和悬浮球交互，如需最新界面可重拍 `01-roster`、`06-settings`）。
 7. `manifest.json` 的 `description` 已压到 70 字符（≤132），长描述填在 Store listing 的 Description 字段。
 8. `store-assets/certification-notes.txt` 里的 `<VIDEO_URL>` 已替换为可访问的脱敏录屏；若“是否需要账号”选「是」，说明框已粘贴全文。
+9. 商店要求更新必须提高版本号：已从 1.0.0 升到 **1.1.0**，Partner Center 上传后确认包的版本显示为 1.1.0。

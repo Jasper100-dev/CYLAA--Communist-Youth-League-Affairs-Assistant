@@ -3137,8 +3137,10 @@
       <div class="tiny" style="margin:-2px 0 8px">收起成悬浮球后可以直接拖动；开启吸附时松手会贴到最近的左右页面边缘，卡片会按球的位置自动决定展开方向。</div>
       <label class="sw">操作间隔 <input type="number" data-set="delay" min="200" max="3000" step="100" value="${state.settings.delay}" style="width:70px"> ms</label>
       <div class="row" style="margin-top:8px">
-        <button class="b" data-act="logout">清除本地数据</button>
+        <button class="b" data-act="clearCache">清理缓存</button>
+        <button class="b" data-act="clearAll">完全清除</button>
       </div>
+      <div class="tiny" style="margin:-2px 0 8px">清理缓存：清空当前名单、验证码、日志和评议缓存，保留面板设置与名单快照。<br>完全清除：同时删除本地保存的名单快照、面板设置等全部数据。</div>
       <div style="border-top:1px dashed #eee;margin:10px 0"></div>
       <div class="tiny">当前版本 v${VERSION}（商店版，更新由 Microsoft Edge 加载项商店完成）</div>
       <div class="tiny" style="margin-top:10px">
@@ -3158,7 +3160,8 @@
         saveSettings();
       })
     );
-    pane.querySelector('[data-act="logout"]').addEventListener('click', () => {
+    // 清空面板内存态与会话缓存（不动 chrome.storage.local）
+    const wipeMemory = () => {
       state.roster = [];
       state.selected.clear();
       state.codes = [];
@@ -3166,9 +3169,33 @@
       state._rosterSig = null;
       state._official = undefined;
       clearPjCache();
+      try {
+        sessionStorage.removeItem(INFO_TPL_KEY);
+        sessionStorage.removeItem(INFO_JOB_KEY);
+        sessionStorage.removeItem(DICT_KEY);
+      } catch (e) {
+        /* 非扩展环境忽略 */
+      }
       syncDecoration();
+    };
+    pane.querySelector('[data-act="clearCache"]').addEventListener('click', () => {
+      wipeMemory();
       renderAll();
-      log('已清除');
+      log('已清理缓存（面板设置与名单快照保留）');
+    });
+    pane.querySelector('[data-act="clearAll"]').addEventListener('click', () => {
+      if (!confirm('完全清除会删除本地保存的名单快照、面板设置和全部缓存，且无法恢复。确定继续？')) return;
+      wipeMemory();
+      // 设置恢复默认（含悬浮球位置）
+      state.settings = { autoClose: true, delay: 400, snapEdge: true, ballX: null, ballY: null };
+      try {
+        chrome.storage.local.remove(['zhtjRosterSnapshot', 'zhtjHelperSettings', 'zhtjLastUpdateCheck']);
+      } catch (e) {
+        /* 非扩展环境忽略 */
+      }
+      applyBallLayout();
+      renderAll();
+      log('已完全清除本地数据');
     });
   }
 
